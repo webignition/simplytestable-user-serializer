@@ -11,6 +11,10 @@ class UserSerializer
     const SERIALIZED_USER_KEY_KEY = 'key';
     const SERIALIZED_USER_IV_KEY = 'iv';
 
+    const KEY_HASH_ALGORITHM = 'md5';
+    const KEY_LENGTH_IN_BYTES = 32;
+    const OPENSSL_METHOD = 'aes-256-cbc';
+
     /**
      * @var string
      */
@@ -22,6 +26,11 @@ class UserSerializer
     private $iv;
 
     /**
+     * @var int
+     */
+    private $ivSize;
+
+    /**
      * @var string
      */
     private $key;
@@ -31,11 +40,14 @@ class UserSerializer
      */
     public function __construct($key)
     {
-        $this->key = md5($key);
-        $this->surrogateKey = md5(rand());
+        $this->key = hash(self::KEY_HASH_ALGORITHM, $key);
+        $this->surrogateKey = hash(
+            self::KEY_HASH_ALGORITHM,
+            openssl_random_pseudo_bytes(self::KEY_LENGTH_IN_BYTES)
+        );
 
-        $isSize = mcrypt_get_iv_size(MCRYPT_RIJNDAEL_256, MCRYPT_MODE_ECB);
-        $this->iv = mcrypt_create_iv($isSize, MCRYPT_RAND);
+        $this->ivSize = openssl_cipher_iv_length(self::OPENSSL_METHOD);
+        $this->iv = openssl_random_pseudo_bytes($this->ivSize);
     }
 
     /**
@@ -141,7 +153,17 @@ class UserSerializer
      */
     private function encrypt($plaintext, $key)
     {
-        return mcrypt_encrypt(MCRYPT_RIJNDAEL_256, $key, $plaintext, MCRYPT_MODE_ECB, $this->iv);
+        $rawCipherText = openssl_encrypt(
+            $plaintext,
+            self::OPENSSL_METHOD,
+            $key,
+            OPENSSL_RAW_DATA,
+            $this->iv
+        );
+
+        $hmac = hash_hmac('sha256', $rawCipherText, $key, true);
+
+        return base64_encode($this->iv . $hmac . $rawCipherText);
     }
 
     /**
@@ -152,6 +174,14 @@ class UserSerializer
      */
     private function decrypt($ciphertext, $key)
     {
-        return mcrypt_decrypt(MCRYPT_RIJNDAEL_256, $key, $ciphertext, MCRYPT_MODE_ECB, $this->iv);
+        $data = base64_decode($ciphertext);
+
+        $iv = substr($data, 0, $this->ivSize);
+        $hmac = substr($data, $this->ivSize, 32);
+        $rawCipherText = substr($data, $this->ivSize + 32);
+
+        $plainText = openssl_decrypt($rawCipherText, self::OPENSSL_METHOD, $key, OPENSSL_RAW_DATA, $this->iv);
+
+        return $plainText;
     }
 }
