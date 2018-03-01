@@ -13,22 +13,12 @@ class UserSerializer
 
     const KEY_HASH_ALGORITHM = 'md5';
     const KEY_LENGTH_IN_BYTES = 32;
-    const OPENSSL_METHOD = 'aes-256-cbc';
+    const OPENSSL_METHOD = 'aes-256-ctr';
 
     /**
      * @var string
      */
     private $surrogateKey;
-
-    /**
-     * @var string
-     */
-    private $iv;
-
-    /**
-     * @var int
-     */
-    private $ivSize;
 
     /**
      * @var string
@@ -45,9 +35,6 @@ class UserSerializer
             self::KEY_HASH_ALGORITHM,
             openssl_random_pseudo_bytes(self::KEY_LENGTH_IN_BYTES)
         );
-
-        $this->ivSize = openssl_cipher_iv_length(self::OPENSSL_METHOD);
-        $this->iv = openssl_random_pseudo_bytes($this->ivSize);
     }
 
     /**
@@ -61,7 +48,6 @@ class UserSerializer
             self::SERIALIZED_USER_USERNAME_KEY => $this->encrypt($user->getUsername(), $this->surrogateKey),
             self::SERIALIZED_USER_PASSWORD_KEY => $this->encrypt($user->getPassword(), $this->surrogateKey),
             self::SERIALIZED_USER_KEY_KEY => $this->encrypt($this->surrogateKey, $this->key),
-            self::SERIALIZED_USER_IV_KEY => $this->iv,
         ];
     }
 
@@ -85,6 +71,8 @@ class UserSerializer
      * @param string $user
      *
      * @return User
+     *
+     * @throws InvalidHmacException
      */
     public function deserializeFromString($user)
     {
@@ -101,7 +89,6 @@ class UserSerializer
             self::SERIALIZED_USER_USERNAME_KEY,
             self::SERIALIZED_USER_PASSWORD_KEY,
             self::SERIALIZED_USER_KEY_KEY,
-            self::SERIALIZED_USER_IV_KEY,
         ];
 
         foreach ($expectedKeys as $expectedKey) {
@@ -128,10 +115,11 @@ class UserSerializer
      * @param array $serializedUser
      *
      * @return User
+     *
+     * @throws InvalidHmacException
      */
     public function deserialize($serializedUser)
     {
-        $this->iv = $serializedUser[self::SERIALIZED_USER_IV_KEY];
         $this->surrogateKey = $this->decrypt($serializedUser[self::SERIALIZED_USER_KEY_KEY], $this->key);
 
         $user = new User();
@@ -153,34 +141,47 @@ class UserSerializer
      */
     private function encrypt($plaintext, $key)
     {
+        $ivSize = openssl_cipher_iv_length(self::OPENSSL_METHOD);
+        $iv = openssl_random_pseudo_bytes($ivSize);
+
         $rawCipherText = openssl_encrypt(
             $plaintext,
             self::OPENSSL_METHOD,
             $key,
             OPENSSL_RAW_DATA,
-            $this->iv
+            $iv
         );
 
         $hmac = hash_hmac('sha256', $rawCipherText, $key, true);
 
-        return base64_encode($this->iv . $hmac . $rawCipherText);
+        return base64_encode($iv . $hmac . $rawCipherText);
     }
 
     /**
-     * @param string $ciphertext
+     * @param string $cipherText
      * @param string $key
      *
      * @return string
+     *
+     * @throws InvalidHmacException
      */
-    private function decrypt($ciphertext, $key)
+    private function decrypt($cipherText, $key)
     {
-        $data = base64_decode($ciphertext);
+        $data = base64_decode($cipherText);
 
-        $iv = substr($data, 0, $this->ivSize);
-        $hmac = substr($data, $this->ivSize, 32);
-        $rawCipherText = substr($data, $this->ivSize + 32);
+        $ivSize = openssl_cipher_iv_length(self::OPENSSL_METHOD);
 
-        $plainText = openssl_decrypt($rawCipherText, self::OPENSSL_METHOD, $key, OPENSSL_RAW_DATA, $this->iv);
+        $iv = substr($data, 0, $ivSize);
+        $hmac = substr($data, $ivSize, 32);
+        $rawCipherText = substr($data, $ivSize + 32);
+
+        $plainText = openssl_decrypt($rawCipherText, self::OPENSSL_METHOD, $key, OPENSSL_RAW_DATA, $iv);
+
+        $calculatedHmac = hash_hmac('sha256', $rawCipherText, $key, true);
+
+        if ($hmac !== $calculatedHmac) {
+            throw new InvalidHmacException();
+        }
 
         return $plainText;
     }
