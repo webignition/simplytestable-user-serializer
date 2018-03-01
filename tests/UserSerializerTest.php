@@ -3,6 +3,7 @@
 namespace Tests\WebClientBundle\Functional\Services;
 
 use webignition\SimplyTestableUserModel\User;
+use webignition\SimplyTestableUserSerializer\InvalidCipherTextException;
 use webignition\SimplyTestableUserSerializer\InvalidHmacException;
 use webignition\SimplyTestableUserSerializer\UserSerializer;
 
@@ -41,6 +42,7 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
 
     /**
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function testSerializeDeserialize()
     {
@@ -68,6 +70,7 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
      * @param User|null $expectedUser
      *
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function testDeserializeFromStringFailure($userAsString, $expectedUser)
     {
@@ -115,14 +118,44 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
 
     /**
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
+     */
+    public function testDeserializeFromStringInvalidCipherTextException()
+    {
+        $userAsStringWithInvalidIv = 'eyJ1c2VybmFtZSI6Ik01bEVNaWpzREVIeW5RTEZOUjJnb09UWWRaQWdVTkhqVzlZQkJYeGdjcmM9Iiw'.
+            'icGFzc3dvcmQiOiJ0QXpNQTB1empRT1hQV1wvenpoTjZHSVFoZkNQcDNEc21saWFNS0JOOTl3RT0iLCJrZXkiOiJweWFXN2hsSVYwXC9'.
+            'ocVR2dUpXRTd6UFpwU2R6QnJxQzBQMkpcL09LMndFRWs9IiwiaXYiOiJNOGFUOG1YWW5rQUhrRzdTUXFvMTZhWmo5MnJScnVDZ1FONnV'.
+            'WcUxDS1VBPSJ9';
+
+        $this->expectException(InvalidCipherTextException::class);
+
+        $this->userSerializer->deserializeFromString($userAsStringWithInvalidIv);
+    }
+
+    /**
+     * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function testDeserializeFromStringInvalidHmacException()
     {
-        $userAsString = base64_encode(json_encode([
-            UserSerializer::SERIALIZED_USER_USERNAME_KEY => 'username',
-            UserSerializer::SERIALIZED_USER_PASSWORD_KEY => 'password',
-            UserSerializer::SERIALIZED_USER_KEY_KEY => 'foo',
-        ]));
+        $serializedUser = $this->userSerializer->serialize($this->user);
+        $cipherUsername = $serializedUser[UserSerializer::SERIALIZED_USER_USERNAME_KEY];
+
+        $ivSize = openssl_cipher_iv_length(UserSerializer::OPENSSL_METHOD);
+
+        $iv = substr($cipherUsername, 0, $ivSize);
+        $hmac = substr($cipherUsername, $ivSize, UserSerializer::HMAC_LENGTH);
+        $rawCipherText = substr($cipherUsername, $ivSize + UserSerializer::HMAC_LENGTH);
+
+        $mutatedCipherUsername = $iv . md5($hmac) . $rawCipherText;
+
+        $serializedUser[UserSerializer::SERIALIZED_USER_USERNAME_KEY] = $mutatedCipherUsername;
+
+        foreach ($serializedUser as $key => $value) {
+            $serializedUser[$key] = base64_encode($value);
+        }
+
+        $userAsString = base64_encode(json_encode($serializedUser));
 
         $this->expectException(InvalidHmacException::class);
 
@@ -131,6 +164,7 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
 
     /**
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function testDeserializeFromStringSuccess()
     {

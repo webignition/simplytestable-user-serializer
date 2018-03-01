@@ -9,11 +9,11 @@ class UserSerializer
     const SERIALIZED_USER_USERNAME_KEY = 'username';
     const SERIALIZED_USER_PASSWORD_KEY = 'password';
     const SERIALIZED_USER_KEY_KEY = 'key';
-    const SERIALIZED_USER_IV_KEY = 'iv';
 
     const KEY_HASH_ALGORITHM = 'md5';
     const KEY_LENGTH_IN_BYTES = 32;
     const OPENSSL_METHOD = 'aes-256-ctr';
+    const HMAC_LENGTH = 32;
 
     /**
      * @var string
@@ -73,6 +73,7 @@ class UserSerializer
      * @return User
      *
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function deserializeFromString($user)
     {
@@ -117,6 +118,7 @@ class UserSerializer
      * @return User
      *
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     public function deserialize($serializedUser)
     {
@@ -164,6 +166,7 @@ class UserSerializer
      * @return string
      *
      * @throws InvalidHmacException
+     * @throws InvalidCipherTextException
      */
     private function decrypt($cipherText, $key)
     {
@@ -172,10 +175,14 @@ class UserSerializer
         $ivSize = openssl_cipher_iv_length(self::OPENSSL_METHOD);
 
         $iv = substr($data, 0, $ivSize);
-        $hmac = substr($data, $ivSize, 32);
-        $rawCipherText = substr($data, $ivSize + 32);
+        $hmac = substr($data, $ivSize, self::HMAC_LENGTH);
+        $rawCipherText = substr($data, $ivSize + self::HMAC_LENGTH);
 
-        $plainText = openssl_decrypt($rawCipherText, self::OPENSSL_METHOD, $key, OPENSSL_RAW_DATA, $iv);
+        $plainText = @openssl_decrypt($rawCipherText, self::OPENSSL_METHOD, $key, OPENSSL_RAW_DATA, $iv);
+
+        if (empty($plainText)) {
+            throw new InvalidCipherTextException();
+        }
 
         $calculatedHmac = hash_hmac('sha256', $rawCipherText, $key, true);
 
