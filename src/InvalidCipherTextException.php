@@ -2,6 +2,6 @@
 
 namespace webignition\SimplyTestableUserSerializer;
 
-class InvalidHmacException extends InvalidCipherTextException
+class InvalidCipherTextException extends \Exception
 {
 }
