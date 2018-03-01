@@ -3,6 +3,7 @@
 namespace Tests\WebClientBundle\Functional\Services;
 
 use webignition\SimplyTestableUserModel\User;
+use webignition\SimplyTestableUserSerializer\InvalidHmacException;
 use webignition\SimplyTestableUserSerializer\UserSerializer;
 
 class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
@@ -32,12 +33,15 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
     {
         parent::setUp();
 
-        $this->userSerializer = new UserSerializer('foo');
+        $this->userSerializer = new UserSerializer(md5('foo'));
 
         $this->user = new User(self::USER_USERNAME, self::USER_PASSWORD);
         $this->userAsString = $this->userSerializer->serializeToString($this->user);
     }
 
+    /**
+     * @throws InvalidHmacException
+     */
     public function testSerializeDeserialize()
     {
         $serializedUser = $this->userSerializer->serialize($this->user);
@@ -47,7 +51,6 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
             UserSerializer::SERIALIZED_USER_USERNAME_KEY,
             UserSerializer::SERIALIZED_USER_PASSWORD_KEY,
             UserSerializer::SERIALIZED_USER_KEY_KEY,
-            UserSerializer::SERIALIZED_USER_IV_KEY,
         ], array_keys($serializedUser));
 
         $this->assertEquals($this->user, $this->userSerializer->deserialize($serializedUser));
@@ -63,13 +66,11 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
      *
      * @param string $userAsString
      * @param User|null $expectedUser
+     *
+     * @throws InvalidHmacException
      */
     public function testDeserializeFromStringFailure($userAsString, $expectedUser)
     {
-        if ($userAsString === '{{userAsString}}') {
-            $userAsString = $this->userAsString;
-        }
-
         $user = $this->userSerializer->deserializeFromString($userAsString);
 
         $this->assertEquals($expectedUser, $user);
@@ -90,30 +91,48 @@ class UserSerializerServiceTest extends \PHPUnit_Framework_TestCase
             UserSerializer::SERIALIZED_USER_USERNAME_KEY => 'username',
             UserSerializer::SERIALIZED_USER_PASSWORD_KEY => 'password',
             UserSerializer::SERIALIZED_USER_KEY_KEY => '',
-            UserSerializer::SERIALIZED_USER_IV_KEY => '',
         ]));
 
         return [
             'not an array' => [
-                'stringifiedUser' => 'foo',
+                'userAsString' => 'foo',
                 'expectedUser' => null,
             ],
             'empty array' => [
-                'stringifiedUser' => $empty,
+                'userAsString' => $empty,
                 'expectedUser' => null,
             ],
             'invalid array' => [
-                'stringifiedUser' => $invalid,
+                'userAsString' => $invalid,
                 'expectedUser' => null,
             ],
             'empty values' => [
-                'stringifiedUser' => $validKeysEmptyValues,
+                'userAsString' => $validKeysEmptyValues,
                 'expectedUser' => null,
             ],
         ];
     }
 
-    public function testUnserializeFromStringSuccess()
+    /**
+     * @throws InvalidHmacException
+     */
+    public function testDeserializeFromStringInvalidHmacException()
+    {
+        $userAsString = base64_encode(json_encode([
+            UserSerializer::SERIALIZED_USER_USERNAME_KEY => 'username',
+            UserSerializer::SERIALIZED_USER_PASSWORD_KEY => 'password',
+            UserSerializer::SERIALIZED_USER_KEY_KEY => 'foo',
+        ]));
+
+        $this->expectException(InvalidHmacException::class);
+
+        $this->userSerializer->deserializeFromString($userAsString);
+    }
+
+    /**
+     * @throws InvalidHmacException
+     */
+    public function testDeserializeFromStringSuccess()
     {
         $this->assertEquals(
             $this->user,
